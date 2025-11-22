@@ -779,42 +779,70 @@ class SmartNotesApp:
         self._with_loading(task)
 
     def _ai_suggest_tags(self):
+        # 1. Явная проверка с уведомлением, если что-то пошло не так с состоянием кнопки
         if not self.api.available():
+            self._snack("API недоступен. Проверьте настройки.")
             return
+            
         if not self.selected_note_id:
             self._snack("Сначала выберите или создайте заметку (Ctrl+N)")
             return
             
         text = (self.title_field.value or "") + "\n\n" + (self.content_field.value or "")
+        if len(text.strip()) < 10:
+            self._snack("Слишком короткий текст для анализа")
+            return
 
         def task():
+            # Запрос к API
             tags = self.api.suggest_tags(text, max_tags=5)
+            
             if not tags:
-                self._snack("Теги не найдены")
+                self._snack("ИИ не смог выделить теги из этого текста")
                 return
+            
+            # Создание чекбоксов
             checks = [ft.Checkbox(label=t, value=True, data=t) for t in tags]
             col = ft.Column(checks, scroll=ft.ScrollMode.AUTO, height=300, width=400)
             
-            def accept():
+            def accept(e):
                 self._close_dialog(dlg)
                 if not self.selected_note_id:
                     return
+                # Получаем текущие теги
                 cur = [t["name"] for t in self.db.list_note_tags(self.selected_note_id)]
-                for t in [c.data for c in checks if c.value]:
-                    if t not in cur:
-                        cur.append(t)
-                self.db.set_note_tags(self.selected_note_id, cur)
-                self._load_note_tags()
-                self._reload_notes()
+                # Добавляем новые, если их нет
+                added_count = 0
+                for c in checks:
+                    if c.value and c.data not in cur:
+                        cur.append(c.data)
+                        added_count += 1
+                
+                if added_count > 0:
+                    self.db.set_note_tags(self.selected_note_id, cur)
+                    self._load_note_tags()
+                    self._reload_notes()
+                    self._snack(f"Добавлено тегов: {added_count}")
+                else:
+                    self._snack("Новых тегов не добавлено")
 
             dlg = ft.AlertDialog(
-                modal=True, title=ft.Text("Предложенные теги"), content=col,
+                modal=True,
+                title=ft.Text("Предложенные теги"),
+                content=col,
                 actions=[
                     ft.TextButton("Отмена", on_click=lambda e: self._close_dialog(dlg)),
-                    ft.ElevatedButton("Добавить", on_click=lambda e: accept()),
-                ], actions_alignment=ft.MainAxisAlignment.END,
+                    ft.ElevatedButton("Добавить", on_click=accept),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
             )
+            
+            # ВАЖНО: Открываем диалог и принудительно обновляем страницу прямо здесь,
+            # чтобы окно точно появилось, даже находясь внутри потока.
             self._open_dialog(dlg)
+            self.page.update()
+
+        self._with_loading(task)
 
     def _ai_generate_title(self):
         if not self.api.available():
