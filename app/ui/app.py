@@ -186,10 +186,10 @@ class SmartNotesApp:
 
         self.title_field = ft.TextField(
             hint_text="Заголовок",
+            max_length=120,
             on_change=lambda e: self._on_editor_change(),
             text_style=ft.TextStyle(weight=ft.FontWeight.BOLD),
         )
-        # Очистили подсказку
         self.content_field = ft.TextField(
             hint_text="Начните писать...",
             multiline=True,
@@ -578,15 +578,29 @@ class SmartNotesApp:
         self._reload_notes()
 
     def _delete_note(self, note_id: int):
-        self.db.delete_note(note_id)
-        if self.selected_note_id == note_id:
-            self.selected_note_id = None
-            self.title_field.value = ""
-            self.content_field.value = ""
-            self.note_tags_wrap.controls.clear()
-            self.note_tags_wrap.update()
-        self._reload_notes()
-        self._update_preview()
+        def confirm_del():
+            self.db.delete_note(note_id)
+            self._close_dialog(dlg)
+            if self.selected_note_id == note_id:
+                self.selected_note_id = None
+                self.title_field.value = ""
+                self.content_field.value = ""
+                self.note_tags_wrap.controls.clear()
+                self.note_tags_wrap.update()
+            self._reload_notes()
+            self._update_preview()
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Удалить заметку?"),
+            content=ft.Text("Это действие нельзя отменить."),
+            actions=[
+                ft.TextButton("Отмена", on_click=lambda e: self._close_dialog(dlg)),
+                ft.ElevatedButton("Удалить", on_click=lambda e: confirm_del(), bgcolor=ft.Colors.ERROR),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self._open_dialog(dlg)
 
     def _move_note_dialog(self, note_id: int):
         folders = [dict(id=f["id"], name=f["name"]) for f in self.db.list_folders()]
@@ -794,14 +808,12 @@ class SmartNotesApp:
             return
 
         def task():
-            # Запрос к API
             tags = self.api.suggest_tags(text, max_tags=5)
             
             if not tags:
                 self._snack("ИИ не смог выделить теги из этого текста")
                 return
             
-            # Создание чекбоксов
             checks = [ft.Checkbox(label=t, value=True, data=t) for t in tags]
             col = ft.Column(checks, scroll=ft.ScrollMode.AUTO, height=300, width=400)
             
@@ -809,9 +821,7 @@ class SmartNotesApp:
                 self._close_dialog(dlg)
                 if not self.selected_note_id:
                     return
-                # Получаем текущие теги
                 cur = [t["name"] for t in self.db.list_note_tags(self.selected_note_id)]
-                # Добавляем новые, если их нет
                 added_count = 0
                 for c in checks:
                     if c.value and c.data not in cur:
@@ -837,8 +847,6 @@ class SmartNotesApp:
                 actions_alignment=ft.MainAxisAlignment.END,
             )
             
-            # ВАЖНО: Открываем диалог и принудительно обновляем страницу прямо здесь,
-            # чтобы окно точно появилось, даже находясь внутри потока.
             self._open_dialog(dlg)
             self.page.update()
 
